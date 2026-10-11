@@ -18,7 +18,7 @@ type Store struct {
 }
 
 const (
-	currentSchemaVersion = 5
+	currentSchemaVersion = 6
 	sqliteBusyTimeoutMS  = 5000
 )
 
@@ -162,6 +162,7 @@ func (s *Store) schemaReady() (bool, error) {
 
 	for _, index := range []string{
 		"idx_notes_pending",
+		"idx_notes_active_path",
 		"idx_todo_lists_active_order",
 		"idx_todo_lists_pending",
 		"idx_todos_active_order",
@@ -189,6 +190,12 @@ func (s *Store) schemaReady() (bool, error) {
 	}
 	if !hasLastSyncError {
 		return false, nil
+	}
+	for _, column := range []string{"remote_path", "sync_etag", "sync_base_path", "remote_sync_etag", "remote_sync_base_path", "conflict_copy_uuid", "conflict_copy_path", "conflict_attempt_json"} {
+		found, err := tableHasColumnDB(s.db, "notes", column)
+		if err != nil || !found {
+			return false, err
+		}
 	}
 
 	for _, model := range []string{"ai_task_runs", "ai_task_events"} {

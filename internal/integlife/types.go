@@ -85,18 +85,26 @@ type SyncResult struct {
 }
 
 type NoteRecord struct {
-	UUID              string
-	Path              string
-	Content           string
-	DeletedAt         *time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	SyncedAt          *time.Time
-	SyncedContentHash string
-	RemoteContent     string
-	RemoteUpdatedAt   *time.Time
-	RemoteDeletedAt   *time.Time
-	LastSyncError     string
+	UUID               string
+	Path               string
+	Content            string
+	DeletedAt          *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	SyncedAt           *time.Time
+	SyncedContentHash  string
+	SyncETag           string
+	SyncBasePath       string
+	RemoteContent      string
+	RemotePath         string
+	RemoteSyncETag     string
+	RemoteSyncBasePath string
+	ConflictCopyUUID   string
+	ConflictCopyPath   string
+	ConflictAttempt    *NoteRecord
+	RemoteUpdatedAt    *time.Time
+	RemoteDeletedAt    *time.Time
+	LastSyncError      string
 }
 
 type AITaskRunRecord struct {
@@ -174,24 +182,29 @@ type SyncBatch struct {
 }
 
 type SyncAck struct {
-	Models              []string
-	NoteSynced          []string
-	NoteConflicts       []NoteRecord
-	NoteServerRows      []NoteRecord
-	StatusLogUUIDs      []string
-	TodoSynced          []string
-	TodoConflicts       []string
-	TodoServerRecords   []TodoRecord
-	TodoReplySynced     []string
-	TodoReplyConflicts  []string
-	TodoReplyServerRows []TodoReplyRecord
-	TodoListSynced      []string
-	TodoListConflicts   []string
-	TodoListServerRows  []TodoListRecord
-	AITaskRunSynced     []string
-	AITaskRunConflicts  []string
-	AITaskEventSynced   []string
-	AITaskEventErrors   map[string]string
-	ServerTime          time.Time
-	Detail              string
+	Models               []string
+	NoteSynced           []string
+	NoteConflicts        []NoteRecord
+	NoteServerRows       []NoteRecord
+	NoteSyncETags        map[string]string
+	NoteSyncBasePaths    map[string]string
+	NoteConflictCopies   map[string]NoteRecord
+	NoteConflictAttempts map[string]NoteRecord
+	NoteErrors           map[string]string
+	StatusLogUUIDs       []string
+	TodoSynced           []string
+	TodoConflicts        []string
+	TodoServerRecords    []TodoRecord
+	TodoReplySynced      []string
+	TodoReplyConflicts   []string
+	TodoReplyServerRows  []TodoReplyRecord
+	TodoListSynced       []string
+	TodoListConflicts    []string
+	TodoListServerRows   []TodoListRecord
+	AITaskRunSynced      []string
+	AITaskRunConflicts   []string
+	AITaskEventSynced    []string
+	AITaskEventErrors    map[string]string
+	ServerTime           time.Time
+	Detail               string
 }

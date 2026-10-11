@@ -557,6 +557,9 @@ func (s *Service) SyncPending(ctx context.Context) (SyncResult, error) {
 	for uuid, detail := range ack.AITaskEventErrors {
 		result.Failures = append(result.Failures, SyncFailure{UUID: uuid, Detail: detail})
 	}
+	for uuid, detail := range ack.NoteErrors {
+		result.Failures = append(result.Failures, SyncFailure{UUID: uuid, Detail: detail})
+	}
 	noteConflicts, err := s.store.ListNotes(true, true)
 	if err != nil {
 		return SyncResult{}, err
@@ -898,18 +901,37 @@ func (s *Service) bestEffortSync(ctx context.Context) (bool, string) {
 
 func (s *Service) applySyncAck(ack SyncAck) error {
 	for _, uuid := range ack.NoteSynced {
-		if err := s.store.MarkNoteSynced(uuid, ack.ServerTime); err != nil {
+		var err error
+		if etag, accepted := ack.NoteSyncETags[uuid]; accepted {
+			err = s.store.MarkNoteSynced(uuid, ack.ServerTime, NoteRecord{SyncETag: etag, SyncBasePath: ack.NoteSyncBasePaths[uuid]})
+		} else {
+			err = s.store.MarkNoteSynced(uuid, ack.ServerTime)
+		}
+		if err != nil {
 			return err
 		}
 	}
 	for _, note := range ack.NoteConflicts {
-		if err := s.store.ApplyNoteConflict(note.UUID, note); err != nil {
+		copyRef := ack.NoteConflictCopies[note.UUID]
+		attempt := ack.NoteConflictAttempts[note.UUID]
+		if err := s.store.ApplyNoteConflict(note.UUID, note, copyRef, attempt); err != nil {
 			return err
 		}
 	}
-	for _, note := range ack.NoteServerRows {
-		if _, err := s.store.ApplyRemoteNote(note, ack.ServerTime); err != nil {
+	for uuid, detail := range ack.NoteErrors {
+		if err := s.store.MarkNoteSyncError(uuid, detail); err != nil {
 			return err
+		}
+	}
+	// A path released by a deletion can be reused by another UUID in this response.
+	for _, deleted := range []bool{true, false} {
+		for _, note := range ack.NoteServerRows {
+			if (note.DeletedAt != nil) != deleted {
+				continue
+			}
+			if _, err := s.store.ApplyRemoteNote(note, ack.ServerTime); err != nil {
+				return err
+			}
 		}
 	}
 	for _, uuid := range ack.StatusLogUUIDs {

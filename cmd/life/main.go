@@ -1139,14 +1139,7 @@ func printTodo(todo integlife.TodoRecord, jsonOut bool) {
 func printNote(note integlife.NoteRecord, notesDir string, jsonOut bool) {
 	path := filepath.Join(notesDir, note.Path)
 	if jsonOut {
-		printJSON(map[string]any{
-			"uuid":            note.UUID,
-			"path":            path,
-			"deleted_at":      note.DeletedAt,
-			"updated_at":      note.UpdatedAt,
-			"synced":          note.SyncedAt != nil,
-			"last_sync_error": note.LastSyncError,
-		})
+		printJSON(noteJSON(note, notesDir))
 		return
 	}
 	state := "pending"
@@ -1162,21 +1155,46 @@ func printNote(note integlife.NoteRecord, notesDir string, jsonOut bool) {
 	fmt.Printf("%s [%s] %s\n", shortID(note.UUID), state, path)
 	if note.LastSyncError != "" {
 		fmt.Printf("sync conflict/error: %s\n", note.LastSyncError)
+		if note.RemotePath != "" {
+			fmt.Printf("server path: %s\n", note.RemotePath)
+		}
+		if note.ConflictCopyUUID != "" {
+			fmt.Printf("server conflict copy: %s %s\n", note.ConflictCopyUUID, note.ConflictCopyPath)
+		}
 	}
+}
+
+func noteJSON(note integlife.NoteRecord, notesDir string) map[string]any {
+	out := map[string]any{
+		"uuid": note.UUID, "path": filepath.Join(notesDir, note.Path), "relative_path": note.Path,
+		"deleted_at": note.DeletedAt, "updated_at": note.UpdatedAt, "synced": note.SyncedAt != nil,
+		"last_sync_error": note.LastSyncError, "sync_etag": note.SyncETag, "sync_base_path": note.SyncBasePath,
+	}
+	if strings.HasPrefix(note.LastSyncError, "conflict:") {
+		attempt := note
+		if note.ConflictAttempt != nil {
+			attempt = *note.ConflictAttempt
+		}
+		var copyRef any
+		if note.ConflictCopyUUID != "" {
+			copyRef = map[string]any{"uuid": note.ConflictCopyUUID, "path": note.ConflictCopyPath}
+		}
+		out["notes_conflicts"] = map[string]any{
+			"current": map[string]any{"uuid": note.UUID, "path": note.RemotePath, "content": note.RemoteContent,
+				"deleted_at": note.RemoteDeletedAt, "updated_at": note.RemoteUpdatedAt, "sync_etag": note.RemoteSyncETag, "sync_base_path": note.RemoteSyncBasePath},
+			"attempted": map[string]any{"uuid": attempt.UUID, "path": attempt.Path, "content": attempt.Content,
+				"deleted_at": attempt.DeletedAt, "updated_at": attempt.UpdatedAt, "sync_etag": attempt.SyncETag, "sync_base_path": attempt.SyncBasePath},
+			"conflict_copy": copyRef,
+		}
+	}
+	return out
 }
 
 func printNotes(notes []integlife.NoteRecord, notesDir string, jsonOut bool) {
 	if jsonOut {
 		out := make([]map[string]any, 0, len(notes))
 		for _, note := range notes {
-			out = append(out, map[string]any{
-				"uuid":            note.UUID,
-				"path":            filepath.Join(notesDir, note.Path),
-				"deleted_at":      note.DeletedAt,
-				"updated_at":      note.UpdatedAt,
-				"synced":          note.SyncedAt != nil,
-				"last_sync_error": note.LastSyncError,
-			})
+			out = append(out, noteJSON(note, notesDir))
 		}
 		printJSON(out)
 		return
@@ -1649,8 +1667,10 @@ func printNoteUsage(out *os.File) {
   life note sync
   life note resolve <uuid-or-prefix> --local|--remote
 
-The Markdown files in "life note dir" are the local cache. Edit them directly;
-delete a file to delete its remote note on the next sync.
+The Markdown files in "life note dir" are the registered AI worklog cache.
+Keep their paths stable; new files and local renames are not discovered.
+Deleting a registered file deletes its remote note on the next sync.
+"life note sync" also syncs all other pending CLI records.
 `)
 }
 

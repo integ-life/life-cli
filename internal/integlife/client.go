@@ -172,13 +172,15 @@ type syncStatusLog struct {
 }
 
 type syncNote struct {
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
-	UserID    int     `json:"user_id"`
-	UUID      string  `json:"uuid"`
-	DeletedAt *string `json:"deleted_at,omitempty"`
-	Path      string  `json:"path,omitempty"`
-	Content   string  `json:"content"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+	UserID       int     `json:"user_id"`
+	UUID         string  `json:"uuid"`
+	DeletedAt    *string `json:"deleted_at,omitempty"`
+	Path         string  `json:"path,omitempty"`
+	Content      string  `json:"content"`
+	SyncETag     string  `json:"sync_etag,omitempty"`
+	SyncBasePath string  `json:"sync_base_path,omitempty"`
 }
 
 type syncTodo struct {
@@ -283,20 +285,27 @@ type syncAITaskEvent struct {
 }
 
 type syncResponse struct {
-	NotesServerNewer        []syncNote        `json:"notes_server_newer"`
-	NotesOnlyOnServer       []syncNote        `json:"notes_only_on_server"`
-	ServerTime              string            `json:"server_time"`
-	TodosServerNewer        []syncTodo        `json:"todos_server_newer"`
-	TodosOnlyOnServer       []syncTodo        `json:"todos_only_on_server"`
-	TodoRepliesServerNewer  []syncTodoReply   `json:"todo_replies_server_newer"`
-	TodoRepliesOnlyOnServer []syncTodoReply   `json:"todo_replies_only_on_server"`
-	TodoListsServerNewer    []syncTodoList    `json:"todo_lists_server_newer"`
-	TodoListsOnlyOnServer   []syncTodoList    `json:"todo_lists_only_on_server"`
-	AITaskRunsServerNewer   []syncResponseRun `json:"ai_task_runs_server_newer"`
-	AITaskRunsOnlyOnServer  []syncResponseRun `json:"ai_task_runs_only_on_server"`
-	AITaskEventsAccepted    []string          `json:"ai_task_events_accepted"`
-	AITaskEventsDuplicate   []string          `json:"ai_task_events_duplicate"`
-	AITaskEventsRejected    []syncEventReject `json:"ai_task_events_rejected"`
+	NotesServerNewer        []syncNote         `json:"notes_server_newer"`
+	NotesOnlyOnServer       []syncNote         `json:"notes_only_on_server"`
+	NotesConflicts          []syncNoteConflict `json:"notes_conflicts"`
+	ServerTime              string             `json:"server_time"`
+	TodosServerNewer        []syncTodo         `json:"todos_server_newer"`
+	TodosOnlyOnServer       []syncTodo         `json:"todos_only_on_server"`
+	TodoRepliesServerNewer  []syncTodoReply    `json:"todo_replies_server_newer"`
+	TodoRepliesOnlyOnServer []syncTodoReply    `json:"todo_replies_only_on_server"`
+	TodoListsServerNewer    []syncTodoList     `json:"todo_lists_server_newer"`
+	TodoListsOnlyOnServer   []syncTodoList     `json:"todo_lists_only_on_server"`
+	AITaskRunsServerNewer   []syncResponseRun  `json:"ai_task_runs_server_newer"`
+	AITaskRunsOnlyOnServer  []syncResponseRun  `json:"ai_task_runs_only_on_server"`
+	AITaskEventsAccepted    []string           `json:"ai_task_events_accepted"`
+	AITaskEventsDuplicate   []string           `json:"ai_task_events_duplicate"`
+	AITaskEventsRejected    []syncEventReject  `json:"ai_task_events_rejected"`
+}
+
+type syncNoteConflict struct {
+	Current      syncNote `json:"current"`
+	Attempted    syncNote `json:"attempted"`
+	ConflictCopy syncNote `json:"conflict_copy"`
 }
 
 type syncResponseRun struct {
@@ -469,47 +478,78 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 		runConflicts[run.UUID] = true
 	}
 	ack := SyncAck{
-		Models:              append([]string(nil), batch.Models...),
-		NoteSynced:          []string{},
-		NoteConflicts:       []NoteRecord{},
-		NoteServerRows:      []NoteRecord{},
-		StatusLogUUIDs:      make([]string, 0, len(batch.StatusLogs)),
-		TodoSynced:          []string{},
-		TodoServerRecords:   []TodoRecord{},
-		TodoReplySynced:     []string{},
-		TodoReplyServerRows: []TodoReplyRecord{},
-		TodoListSynced:      []string{},
-		TodoListServerRows:  []TodoListRecord{},
-		AITaskRunSynced:     []string{},
-		AITaskEventSynced:   []string{},
-		AITaskEventErrors:   map[string]string{},
-		ServerTime:          serverTime,
-		Detail:              detail,
+		Models:               append([]string(nil), batch.Models...),
+		NoteSynced:           []string{},
+		NoteConflicts:        []NoteRecord{},
+		NoteServerRows:       []NoteRecord{},
+		NoteSyncETags:        map[string]string{},
+		NoteSyncBasePaths:    map[string]string{},
+		NoteConflictCopies:   map[string]NoteRecord{},
+		NoteConflictAttempts: map[string]NoteRecord{},
+		NoteErrors:           map[string]string{},
+		StatusLogUUIDs:       make([]string, 0, len(batch.StatusLogs)),
+		TodoSynced:           []string{},
+		TodoServerRecords:    []TodoRecord{},
+		TodoReplySynced:      []string{},
+		TodoReplyServerRows:  []TodoReplyRecord{},
+		TodoListSynced:       []string{},
+		TodoListServerRows:   []TodoListRecord{},
+		AITaskRunSynced:      []string{},
+		AITaskEventSynced:    []string{},
+		AITaskEventErrors:    map[string]string{},
+		ServerTime:           serverTime,
+		Detail:               detail,
 	}
 	if len(ack.Models) == 0 {
 		ack.Models = append([]string(nil), buildSyncBatchPayload(batch).SyncModels...)
 	}
-	pendingNotes := map[string]bool{}
+	pendingNotes := map[string]NoteRecord{}
 	for _, note := range batch.Notes {
-		pendingNotes[note.UUID] = true
+		pendingNotes[note.UUID] = note
 	}
 	noteConflicts := map[string]bool{}
-	for _, note := range resp.NotesServerNewer {
+	for _, conflict := range resp.NotesConflicts {
+		current := noteFromSync(conflict.Current)
+		if _, pending := pendingNotes[current.UUID]; !pending || current.UUID == "" {
+			continue
+		}
+		noteConflicts[current.UUID] = true
+		ack.NoteConflicts = append(ack.NoteConflicts, current)
+		if conflict.Attempted.UUID == current.UUID {
+			ack.NoteConflictAttempts[current.UUID] = noteFromSync(conflict.Attempted)
+		} else {
+			ack.NoteConflictAttempts[current.UUID] = pendingNotes[current.UUID]
+		}
+		if conflict.ConflictCopy.UUID != "" {
+			ack.NoteConflictCopies[current.UUID] = noteFromSync(conflict.ConflictCopy)
+		}
+	}
+	for _, note := range append(append([]syncNote(nil), resp.NotesServerNewer...), resp.NotesOnlyOnServer...) {
+		if noteConflicts[note.UUID] {
+			continue
+		}
 		remote := noteFromSync(note)
-		if pendingNotes[note.UUID] {
+		if attempted, pending := pendingNotes[note.UUID]; pending {
+			if remote.Path == "" {
+				remote.Path = attempted.Path
+			}
+			if noteStateHash(remote.Content, remote.DeletedAt, remote.Path) == noteStateHash(attempted.Content, attempted.DeletedAt, attempted.Path) {
+				ack.NoteSyncETags[note.UUID] = remote.SyncETag
+				ack.NoteSyncBasePaths[note.UUID] = remote.SyncBasePath
+				continue
+			}
 			noteConflicts[note.UUID] = true
 			ack.NoteConflicts = append(ack.NoteConflicts, remote)
 			continue
 		}
 		ack.NoteServerRows = append(ack.NoteServerRows, remote)
 	}
-	for _, note := range resp.NotesOnlyOnServer {
-		if !pendingNotes[note.UUID] {
-			ack.NoteServerRows = append(ack.NoteServerRows, noteFromSync(note))
-		}
-	}
 	for _, note := range batch.Notes {
 		if !noteConflicts[note.UUID] {
+			if (managedNotePath(note.Path) || managedNotePath(note.SyncBasePath)) && (ack.NoteSyncETags[note.UUID] == "" || ack.NoteSyncBasePaths[note.UUID] != note.Path) {
+				ack.NoteErrors[note.UUID] = "managed note requires an explicit server acknowledgement with sync_etag and current sync_base_path"
+				continue
+			}
 			ack.NoteSynced = append(ack.NoteSynced, note.UUID)
 		}
 	}
@@ -622,25 +662,29 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 
 func noteToSync(note NoteRecord) syncNote {
 	return syncNote{
-		CreatedAt: note.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt: note.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		UserID:    0,
-		UUID:      note.UUID,
-		DeletedAt: timePtrString(note.DeletedAt),
-		Path:      note.Path,
-		Content:   note.Content,
+		CreatedAt:    note.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:    note.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		UserID:       0,
+		UUID:         note.UUID,
+		DeletedAt:    timePtrString(note.DeletedAt),
+		Path:         note.Path,
+		Content:      note.Content,
+		SyncETag:     note.SyncETag,
+		SyncBasePath: note.SyncBasePath,
 	}
 }
 
 func noteFromSync(note syncNote) NoteRecord {
 	now := time.Now().UTC()
 	return NoteRecord{
-		UUID:      note.UUID,
-		Path:      note.Path,
-		Content:   note.Content,
-		DeletedAt: parseSyncTimePtr(note.DeletedAt),
-		CreatedAt: parseSyncTimeOrNow(note.CreatedAt, now),
-		UpdatedAt: parseSyncTimeOrNow(note.UpdatedAt, now),
+		UUID:         note.UUID,
+		Path:         note.Path,
+		Content:      note.Content,
+		DeletedAt:    parseSyncTimePtr(note.DeletedAt),
+		CreatedAt:    parseSyncTimeOrNow(note.CreatedAt, now),
+		UpdatedAt:    parseSyncTimeOrNow(note.UpdatedAt, now),
+		SyncETag:     note.SyncETag,
+		SyncBasePath: note.SyncBasePath,
 	}
 }
 
