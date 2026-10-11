@@ -47,6 +47,11 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	cfg := integlife.LoadConfig()
+	client := integlife.NewClient(cfg.APIURL, cfg.APIToken, 10*time.Second)
+	// Online context and decisions never depend on an offline SQLite write.
+	if len(args) > 1 && args[0] == "ai" && (args[1] == "context" || args[1] == "ask" || args[1] == "decision") {
+		return cmdAI(ctx, integlife.NewService(nil, client), args[1:])
+	}
 
 	store, err := integlife.OpenStore(cfg.DBPath)
 	if err != nil {
@@ -54,7 +59,6 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer store.Close()
 
-	client := integlife.NewClient(cfg.APIURL, cfg.APIToken, 10*time.Second)
 	service := integlife.NewService(store, client)
 
 	if len(args) == 0 {
@@ -620,6 +624,12 @@ func cmdAI(ctx context.Context, service *integlife.Service, args []string) error
 		return errors.New("missing ai command")
 	}
 	switch args[0] {
+	case "context":
+		return cmdAIContext(ctx, service, args[1:])
+	case "ask":
+		return cmdAIAsk(ctx, service, args[1:])
+	case "decision":
+		return cmdAIDecision(ctx, service, args[1:])
 	case "start":
 		fs := flag.NewFlagSet("life ai start", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -1674,6 +1684,9 @@ func printAIUsage(out *os.File) {
   life ai heartbeat --run <uuid> --summary <text>
   life ai event --run <uuid> --type artifact --title <title> --content <text> --metadata-json '{}'
   life ai block --run <uuid> --question <text>
+  life ai context --run <uuid> [--file checkpoint.json] [--expected-revision <revision>] [--json]
+  life ai ask --run <uuid> --id <stable-id> --question <text> --option yes=Yes --option no=No [--wait 30] [--json]
+  life ai decision --run <uuid> --id <stable-id> [--operation-key <stable-operation>] [--handoff-file handoff.json] [--json]
   life ai complete --run <uuid> --summary <text> --artifact <path>
   life ai status --run <uuid>
   life ai status --current --project goal:<uuid> --todo <uuid>

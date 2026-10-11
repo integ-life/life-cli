@@ -1,6 +1,6 @@
 # life-cli
 
-`life-cli` is a small standalone Go CLI for recording local status logs and best-effort syncing them to a LifeOnGolang-compatible sync API.
+`life-cli` is a standalone Go CLI for recording local status logs, syncing them to Integ.Life, and recovering server-backed AI task decisions.
 
 It is intentionally independent from the main `life-on-golang` backend codebase. The sync payload is defined locally in this project, and local persistence uses SQLite.
 
@@ -14,6 +14,8 @@ It is intentionally independent from the main `life-on-golang` backend codebase.
 - Pull and push worklog Notes without overwriting two-sided changes
 - Manage todos and todo lists locally with best-effort sync
 - Track AI task runs and progress events locally first
+- Save bounded server-backed context checkpoints with conditional revisions
+- Ask one durable question, recover its reply after restart, and claim it once with an explicit operation key
 
 ## Install
 
@@ -82,6 +84,9 @@ This creates binaries for all supported platforms in the `./build` directory and
 - `life list add/list/update/delete` - Manage todo lists
 - `life todo add/list/show/update/done/delete` - Manage todos
 - `life ai start/progress/heartbeat/event/block/complete/status/resume/resolve` - Track AI task execution progress
+- `life ai context --run <uuid> [--file checkpoint.json] --json` - Read or conditionally save a server-backed checkpoint
+- `life ai ask --run <uuid> --id <stable-id> --question <text> --option id=label --option id=label [--wait 30] --json` - Save or recover a durable question, then optionally contact Bridge
+- `life ai decision --run <uuid> --id <stable-id> [--operation-key <key>] [--handoff-file handoff.json] --json` - Read a reply or explicitly claim it once
 - `life note new/list/path/dir/sync/resolve` - Manage cached AI worklog Notes
 - `life --version` - Show version
 
@@ -93,6 +98,8 @@ Primary variables:
 - `INTEGLIFE_API_TOKEN` bearer token for sync, stored by `life login`
 - `INTEGLIFE_DB_PATH` default: `~/.integlife/integlife.db`
 - `LIFE_AI_SESSION_ID` optional AI run session id used by `life ai resume`
+- `LIFE_BRIDGE_URL` optional Bridge base URL; HTTPS is required except for loopback development
+- `LIFE_BRIDGE_TOKEN` optional bearer token for Bridge's `work` channel; kept in memory, never saved or printed
 
 ## Behavior
 
@@ -105,6 +112,72 @@ Primary variables:
 - Only remote Notes containing `#ai-worklog` are pulled into this cache. Deleting a cached file soft-deletes the remote Note on the next sync.
 - If both copies changed, sync keeps the local file, writes the server copy as `.remote.md`, prints the conflict, and exits non-zero. Merge the files and run `life note resolve <uuid> --local`, or discard local changes with `--remote`.
 - Sync failures do not delete local data.
+- `ai context`, `ai ask`, and `ai decision` require an authenticated Life API response. They do not save an offline substitute or create a local SQLite database.
+- `life ai resume` restores run tracking. The caller must separately resume its agent session or start a new session from a handoff file.
+
+## Durable AI checkpoint and decisions
+
+Start and sync a run using the existing `life ai start` flow. A new decision requires a checkpoint that has a goal and next step. Keep summaries compact; do not include credentials or full conversations. The checkpoint is limited to 32 KiB.
+
+Save this as `checkpoint.json`, replacing the session reference with your caller's actual session identifier when available:
+
+```json
+{
+  "schema_version": 1,
+  "goal": "Write release notes for the current change",
+  "summary": "Implementation and tests passed; choose the release note format",
+  "next_step": "Write release notes using the selected format and report the artifact",
+  "constraints": ["Use English", "Describe verified user-facing behavior"],
+  "acceptance_criteria": ["One release note artifact reflects the selected format"],
+  "source_refs": [{"id": "release-plan", "title": "Release plan", "version": "1"}],
+  "artifact_refs": [],
+  "runner_session_ref": ""
+}
+```
+
+```bash
+life ai context --run "$RUN_UUID" --file checkpoint.json --json
+life ai context --run "$RUN_UUID" --json
+life ai ask --run "$RUN_UUID" --id release-note-format \
+  --question "Which release note format should I write?" \
+  --option brief=Brief --option detailed=Detailed \
+  --wait 30 --handoff-file handoff.json --json
+```
+
+Context writes use the fetched checkpoint revision as `expected_revision`; pass `--expected-revision <revision>` to require the revision you previously reviewed. An HTTP success without the requested run, revision, schema and saved checkpoint contents is rejected. Context reads request three recent events, preserve `truncated` and `next_cursor`, and cap the complete response at 2 MiB. Use the run events API for additional history.
+
+The question is persisted before any Bridge request. Its stable ID binds the original options, checkpoint revision, absolute expiry and deterministic Bridge message ID. Repeating the identical `ask` recovers that decision. Changing its question, choices or expiry requires a new ID. A changed checkpoint makes the old proposal stale.
+
+When Bridge is unconfigured or unavailable, the result contains the authenticated Integ.Life task URL. Open it on your phone to view the exact run and answer there. A wait of 0 performs one transport attempt; a wait of 1 to 60 seconds polls for a reply. Timeout, expiry, cancellation and transport failure never select a default option. Pending state returns successfully with `should_execute: false`, so callers must inspect the JSON result.
+
+After the caller exits, recover the same decision in a new process. When configured, `decision` reads the persisted Bridge message and imports an allowed reply; it never submits a new notification. If the original Bridge submission failed, repeat the identical `ask` to retry submission with the same ID:
+
+```bash
+life ai decision --run "$RUN_UUID" --id release-note-format \
+  --handoff-file handoff.json --json
+
+# Claim only after inspecting the actual answer and its allowed operation.
+life ai decision --run "$RUN_UUID" --id release-note-format \
+  --operation-key write-release-notes-v1 --handoff-file handoff.json --json
+```
+
+`consumed: true` and `should_execute: true` mean the first claim to **handle the selected option** was acknowledged. Inspect `answer.option_id`: a decline must stop the proposed action, and a format choice permits only that selected format. The CLI performs no action itself. A repeated claim with the same operation key returns both flags as false, including after a later checkpoint update or expiry; it supports reconciling the original result. Another operation key cannot reuse the reply. A lost response or crash after claiming requires the caller to inspect the original artifact or external result before retrying. Consumption is evidence of a claim, not completed work.
+
+The `handoff` JSON object and optional private `--handoff-file` contain the checkpoint, decision, current context revision, Codex session reference, and an argument array for recovery. The decision carries its own original checkpoint revision. Reopen your Codex session using your runner's existing resume flow, or have a new session read this file, recover the decision and continue the stated next step. This CLI does not launch Codex, wake an exited session, or deserialize model state. Record the resulting artifact with `life ai event --type artifact` or `life ai complete` and verify its sync status.
+
+### Optional Bridge wire contract
+
+Set both `LIFE_BRIDGE_URL` and `LIFE_BRIDGE_TOKEN` to enable the adapter. It uses `GET /v1/messages/{id}` before `POST /v1/messages`, reuses the persisted ID, rejects redirects, and requires an exact acknowledged message ID. The channel is `work`; the topic is the run UUID and `ref` is `https://app.integ.life/#/todo/<todo_uuid>?run=<run_uuid>`.
+
+The Bridge v0.1 product document does not define the complete response schema. This adapter explicitly requires the following additions, which must be implemented by a compatible Bridge server:
+
+- A caller-supplied `id` is idempotent with immutable payload conflict detection.
+- `reply.options` contains objects `{ "id": "brief", "label": "Brief" }`, preserving stable IDs independently of labels.
+- An optional `expires_at` is an absolute RFC3339 timestamp so retrying cannot alter the original expiry.
+- POST and GET return `{ "id": "life-...", "status": "queued" }`; valid states are `queued`, `delivered`, `seen`, `answered`, `expired` and `cancelled`.
+- An answered result includes `reply: { "id": "reply-...", "option_id": "brief", "text": "optional comment", "answered_at": "RFC3339" }`. A label, index or arbitrary text cannot substitute for an allowed `option_id`.
+
+Bridge answers are imported through the authenticated Life API with `source: "bridge_transport"`. Life records the authenticated caller and transport annotation; an API token import is not proof that a human used a phone or watch. Actual Bridge service compatibility and device delivery/reply require separate runtime verification. The Integ.Life web answer path is the supported fallback in this release.
 
 ## API compatibility
 

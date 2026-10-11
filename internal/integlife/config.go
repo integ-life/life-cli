@@ -10,16 +10,20 @@ import (
 const defaultAPIURL = "https://api.integ.life"
 
 type Config struct {
-	APIURL   string
-	APIToken string
-	DBPath   string
+	APIURL      string
+	APIToken    string
+	DBPath      string
+	BridgeURL   string
+	BridgeToken string
 }
 
 func LoadConfig() Config {
 	return Config{
-		APIURL:   firstNonEmpty(os.Getenv("INTEGLIFE_API_URL"), defaultAPIURL),
-		APIToken: firstNonEmpty(os.Getenv("INTEGLIFE_API_TOKEN"), loadAPIToken()),
-		DBPath:   firstNonEmpty(os.Getenv("INTEGLIFE_DB_PATH"), defaultDBPath()),
+		APIURL:      firstNonEmpty(os.Getenv("INTEGLIFE_API_URL"), defaultAPIURL),
+		APIToken:    firstNonEmpty(os.Getenv("INTEGLIFE_API_TOKEN"), loadAPIToken()),
+		DBPath:      firstNonEmpty(os.Getenv("INTEGLIFE_DB_PATH"), defaultDBPath()),
+		BridgeURL:   os.Getenv("LIFE_BRIDGE_URL"),
+		BridgeToken: os.Getenv("LIFE_BRIDGE_TOKEN"),
 	}
 }
 
