@@ -480,6 +480,8 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 	ack := SyncAck{
 		Models:               append([]string(nil), batch.Models...),
 		NoteSynced:           []string{},
+		NoteAttempts:         map[string]NoteRecord{},
+		NoteAccepted:         map[string]NoteRecord{},
 		NoteConflicts:        []NoteRecord{},
 		NoteServerRows:       []NoteRecord{},
 		NoteSyncETags:        map[string]string{},
@@ -506,6 +508,7 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 	pendingNotes := map[string]NoteRecord{}
 	for _, note := range batch.Notes {
 		pendingNotes[note.UUID] = note
+		ack.NoteAttempts[note.UUID] = note
 	}
 	noteConflicts := map[string]bool{}
 	for _, conflict := range resp.NotesConflicts {
@@ -536,6 +539,7 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 			if noteStateHash(remote.Content, remote.DeletedAt, remote.Path) == noteStateHash(attempted.Content, attempted.DeletedAt, attempted.Path) {
 				ack.NoteSyncETags[note.UUID] = remote.SyncETag
 				ack.NoteSyncBasePaths[note.UUID] = remote.SyncBasePath
+				ack.NoteAccepted[note.UUID] = remote
 				continue
 			}
 			noteConflicts[note.UUID] = true
@@ -551,6 +555,10 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 				continue
 			}
 			ack.NoteSynced = append(ack.NoteSynced, note.UUID)
+			if _, explicit := ack.NoteAccepted[note.UUID]; !explicit {
+				// Legacy ordinary Notes responses imply acceptance of the sent snapshot.
+				ack.NoteAccepted[note.UUID] = note
+			}
 		}
 	}
 	for _, record := range batch.StatusLogs {

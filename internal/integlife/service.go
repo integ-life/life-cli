@@ -901,13 +901,12 @@ func (s *Service) bestEffortSync(ctx context.Context) (bool, string) {
 
 func (s *Service) applySyncAck(ack SyncAck) error {
 	for _, uuid := range ack.NoteSynced {
-		var err error
-		if etag, accepted := ack.NoteSyncETags[uuid]; accepted {
-			err = s.store.MarkNoteSynced(uuid, ack.ServerTime, NoteRecord{SyncETag: etag, SyncBasePath: ack.NoteSyncBasePaths[uuid]})
-		} else {
-			err = s.store.MarkNoteSynced(uuid, ack.ServerTime)
+		attempt, attempted := ack.NoteAttempts[uuid]
+		accepted, acknowledged := ack.NoteAccepted[uuid]
+		if !attempted || !acknowledged {
+			return fmt.Errorf("note acknowledgement is missing the sent snapshot: %s", uuid)
 		}
-		if err != nil {
+		if err := s.store.MarkNoteAcknowledged(attempt, accepted, ack.ServerTime); err != nil {
 			return err
 		}
 	}

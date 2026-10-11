@@ -184,6 +184,8 @@ type SyncBatch struct {
 type SyncAck struct {
 	Models               []string
 	NoteSynced           []string
+	NoteAttempts         map[string]NoteRecord
+	NoteAccepted         map[string]NoteRecord
 	NoteConflicts        []NoteRecord
 	NoteServerRows       []NoteRecord
 	NoteSyncETags        map[string]string

@@ -258,17 +258,48 @@ func (s *Store) MarkNoteSynced(uuid string, syncedAt time.Time, accepted ...Note
 	if err != nil {
 		return err
 	}
+	confirmed := note
 	if len(accepted) > 0 {
-		note.SyncETag = accepted[0].SyncETag
-		note.SyncBasePath = accepted[0].SyncBasePath
-		if note.SyncETag != "" && note.SyncBasePath == "" {
-			note.SyncBasePath = note.Path
-		}
+		confirmed.SyncETag = accepted[0].SyncETag
+		confirmed.SyncBasePath = accepted[0].SyncBasePath
 	}
-	note.SyncedAt = &syncedAt
-	note.SyncedContentHash = noteStateHash(note.Content, note.DeletedAt, note.Path)
-	clearNoteConflict(&note)
-	return s.SaveNote(note)
+	return s.MarkNoteAcknowledged(note, confirmed, syncedAt)
+}
+
+// MarkNoteAcknowledged binds the server response to the snapshot sent in that request.
+// Later edits stay pending; an acknowledgement cannot replace a newer remote baseline.
+func (s *Store) MarkNoteAcknowledged(attempt, accepted NoteRecord, syncedAt time.Time) error {
+	acceptedHash := noteStateHash(accepted.Content, accepted.DeletedAt, accepted.Path)
+	if attempt.UUID == "" || accepted.UUID != attempt.UUID || acceptedHash != noteStateHash(attempt.Content, attempt.DeletedAt, attempt.Path) {
+		return fmt.Errorf("note acknowledgement does not match the sent snapshot: %s", attempt.UUID)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := scanNote(tx.QueryRow(noteSelectSQL()+` WHERE uuid = ?`, attempt.UUID))
+	if err != nil {
+		return err
+	}
+	if current.SyncETag != attempt.SyncETag || current.SyncBasePath != attempt.SyncBasePath || current.SyncedContentHash != attempt.SyncedContentHash || strings.HasPrefix(current.LastSyncError, "conflict:") {
+		return tx.Commit()
+	}
+	current.SyncETag, current.SyncBasePath = accepted.SyncETag, accepted.SyncBasePath
+	if current.SyncETag != "" && current.SyncBasePath == "" {
+		current.SyncBasePath = accepted.Path
+	}
+	current.SyncedContentHash = acceptedHash
+	if noteStateHash(current.Content, current.DeletedAt, current.Path) == acceptedHash {
+		current.SyncedAt = &syncedAt
+	} else {
+		current.SyncedAt = nil
+	}
+	clearNoteConflict(&current)
+	if err := saveNote(tx, current); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) MarkNoteSyncError(uuid, detail string) error {
