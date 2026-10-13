@@ -8,9 +8,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/flyfy1/life-cli/internal/integlife"
@@ -39,7 +39,9 @@ var validMoods = []Mood{
 }
 
 func main() {
-	if err := run(context.Background(), os.Args[1:]); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := run(ctx, os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -48,6 +50,16 @@ func main() {
 func run(ctx context.Context, args []string) error {
 	cfg := integlife.LoadConfig()
 	client := integlife.NewClient(cfg.APIURL, cfg.APIToken, 10*time.Second)
+	if len(args) > 0 {
+		switch args[0] {
+		case "login":
+			return cmdLogin(ctx, client, args[1:])
+		case "logout":
+			return cmdLogout()
+		case "auth":
+			return cmdAuthStatus(ctx, client, args[1:])
+		}
+	}
 	// Online context and decisions never depend on an offline SQLite write.
 	if len(args) > 1 && args[0] == "ai" && (args[1] == "context" || args[1] == "ask" || args[1] == "decision") {
 		return cmdAI(ctx, integlife.NewService(nil, client), args[1:])
@@ -69,12 +81,6 @@ func run(ctx context.Context, args []string) error {
 	first := args[0]
 
 	switch first {
-	case "login":
-		return cmdLogin(ctx, client)
-
-	case "logout":
-		return cmdLogout()
-
 	case "sync":
 		return cmdSync(ctx, service)
 
@@ -872,14 +878,17 @@ func validateMood(val string) error {
 	return fmt.Errorf("invalid mood %q; choose from: %s", val, strings.Join(names, ", "))
 }
 
-func cmdLogin(ctx context.Context, client *integlife.Client) error {
+func cmdPasswordLogin(ctx context.Context, client *integlife.Client) error {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return errors.New("password login requires a terminal; use life login for browser approval")
+	}
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("username: ")
 	username, _ := reader.ReadString('\n')
 	username = strings.TrimSpace(username)
 
 	fmt.Print("password: ")
-	passBytes, err := term.ReadPassword(int(syscall.Stdin))
+	passBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	if err != nil {
 		return fmt.Errorf("read password: %w", err)
@@ -1640,7 +1649,9 @@ func printUsage(out *os.File) {
   life <category> '<content>'           record with a specific category
   life ... --mood <mood>                attach a mood to the entry
 
-  life login                            authenticate and save token
+  life login                            approve login in your browser (headless supported)
+  life login --password                 interactive username/password login
+  life auth status                      verify login without displaying the token
   life logout                           remove saved token
   life sync                             push pending entries to the server
   life todo <command>                   manage todos

@@ -78,7 +78,9 @@ This creates binaries for all supported platforms in the `./build` directory and
 - `life '<content>'` - Record a thought with default category
 - `life <category> '<content>'` - Record with a specific category
 - `life ... --mood <mood>` - Attach a mood to the entry
-- `life login` - Authenticate and save API token
+- `life login` - Approve device login in your browser and save an API token (works on headless / non-TTY machines)
+- `life login --password` - Use the legacy interactive username/password login
+- `life auth status` - Verify the active login without displaying the token
 - `life logout` - Remove saved API token
 - `life sync` - Push all pending entries to the server
 - `life list add/list/update/delete` - Manage todo lists
@@ -90,12 +92,24 @@ This creates binaries for all supported platforms in the `./build` directory and
 - `life note new/list/path/dir/sync/resolve` - Manage cached AI worklog Notes
 - `life --version` - Show version
 
+## Browser device login
+
+Run `life login`. It prints an approval URL, an eight-character code, and a prefilled link. Open either link on a device with a browser, sign in to Integ.Life if needed, verify that the code and device name match, and choose Approve. The CLI waits for approval and saves the token to `~/.integlife/token` with mode `0600`. No password is requested by the default CLI flow.
+
+The approval request expires after ten minutes. Polling starts at five seconds and slows down when the server requests it. Ctrl+C cancels waiting. A browser opens automatically when a local graphical session is available; on SSH or a headless machine, open the printed link on another device. Failure to open a browser does not fail login.
+
+Each approved login creates a named, revocable `tok_` API token, with no fixed expiry, using the existing Integ.Life API token mechanism. Revoke a lost or unused device under **Settings → API tokens** in the web app. This token grants the same account API access as existing CLI tokens. `life logout` removes only the local saved token; it does not revoke server access or clear an environment override. `life auth status` verifies the active token against the API and exits nonzero if it is missing, invalid, revoked, or cannot be checked. An `INTEGLIFE_API_TOKEN` override continues to take precedence after login.
+
+`life login --password` keeps the legacy username/password flow for interactive terminals. The server must support `/cli/device/code` and `/cli/device/token` for default device login; there is no automatic password fallback.
+
+The web app uses hash routes, so approval links use `https://app.integ.life/#/device` (with `?code=XXXX-XXXX` after the fragment for a prefilled code). Custom servers derive this URL from their `APP_BASE_URL` setting.
+
 ## Environment variables
 
 Primary variables:
 
 - `INTEGLIFE_API_URL` default: `https://api.integ.life`
-- `INTEGLIFE_API_TOKEN` bearer token for sync, stored by `life login`
+- `INTEGLIFE_API_TOKEN` bearer token override; takes precedence over the token saved by `life login`
 - `INTEGLIFE_DB_PATH` default: `~/.integlife/integlife.db`
 - `LIFE_AI_SESSION_ID` optional AI run session id used by `life ai resume`
 - `LIFE_BRIDGE_URL` optional Bridge base URL; HTTPS is required except for loopback development
