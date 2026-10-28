@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -119,7 +120,6 @@ func (s *Service) AddTodo(ctx context.Context, content, notes, listRef string, o
 
 func (s *Service) AddTodoWithOptions(ctx context.Context, opts AddTodoOptions) (TodoCommandResult, error) {
 	content := strings.TrimSpace(opts.Content)
-	content = strings.TrimSpace(content)
 	if content == "" {
 		return TodoCommandResult{}, fmt.Errorf("content must be non-empty")
 	}
@@ -475,7 +475,7 @@ func (s *Service) LogAndMaybeSync(ctx context.Context, logType, content string) 
 	}
 
 	if !s.client.CanSync() {
-		return record, false, "INTEGLIFE_API_TOKEN not set", nil
+		return record, false, `not logged in; run "life login" or set INTEGLIFE_API_TOKEN`, nil
 	}
 
 	result, err := s.SyncPending(ctx)
@@ -493,7 +493,7 @@ func (s *Service) LogAndMaybeSync(ctx context.Context, logType, content string) 
 
 func (s *Service) SyncPending(ctx context.Context) (SyncResult, error) {
 	if !s.client.CanSync() {
-		return SyncResult{}, fmt.Errorf("INTEGLIFE_API_TOKEN not set")
+		return SyncResult{}, errors.New(`not logged in; run "life login" or set INTEGLIFE_API_TOKEN`)
 	}
 
 	if err := s.store.RefreshNoteFiles(s.now()); err != nil {
@@ -567,6 +567,8 @@ func (s *Service) SyncPending(ctx context.Context) (SyncResult, error) {
 	for _, note := range noteConflicts {
 		result.Failures = append(result.Failures, SyncFailure{UUID: note.UUID, Detail: note.LastSyncError})
 	}
+	// Failures come from map iteration; sort so Failures[0] is stable.
+	sort.SliceStable(result.Failures, func(i, j int) bool { return result.Failures[i].UUID < result.Failures[j].UUID })
 	return result, nil
 }
 
@@ -887,7 +889,7 @@ func (s *Service) newAITaskEvent(run AITaskRunRecord, opts AIEventOptions) (AITa
 
 func (s *Service) bestEffortSync(ctx context.Context) (bool, string) {
 	if !s.client.CanSync() {
-		return false, "INTEGLIFE_API_TOKEN not set"
+		return false, `not logged in; run "life login" or set INTEGLIFE_API_TOKEN`
 	}
 	result, err := s.SyncPending(ctx)
 	if err != nil {

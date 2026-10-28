@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -105,7 +106,7 @@ func (c *Client) SyncRecord(ctx context.Context, record Record) (string, error) 
 
 func (c *Client) SyncRecords(ctx context.Context, batch SyncBatch) (SyncAck, error) {
 	if !c.CanSync() {
-		return SyncAck{}, fmt.Errorf("INTEGLIFE_API_TOKEN not set")
+		return SyncAck{}, errors.New(`not logged in; run "life login" or set INTEGLIFE_API_TOKEN`)
 	}
 
 	payload := buildSyncBatchPayload(batch)
