@@ -472,10 +472,10 @@ func (s *Store) ResolveTodo(ref string) (TodoRecord, error) {
 		return TodoRecord{}, fmt.Errorf("todo ref must be non-empty")
 	}
 	rows, err := s.db.Query(todoSelectSQL()+`
-		WHERE deleted_at IS NULL AND (uuid = ? OR uuid LIKE ?)
+		WHERE deleted_at IS NULL AND (uuid = ? OR uuid LIKE ? ESCAPE '\')
 		ORDER BY CASE WHEN uuid = ? THEN 0 ELSE 1 END, client_updated_at DESC
 		LIMIT 2
-	`, ref, ref+"%", ref)
+	`, ref, escapeLike(ref)+"%", ref)
 	if err != nil {
 		return TodoRecord{}, fmt.Errorf("resolve todo: %w", err)
 	}
@@ -682,11 +682,17 @@ func (s *Store) ResolveTodoList(ref string) (TodoListRecord, error) {
 	if ref == "" {
 		return TodoListRecord{}, fmt.Errorf("list ref must be non-empty")
 	}
+	// LIKE wildcards in a list name must not match other lists, so only
+	// uuid-shaped refs get prefix matching.
+	uuidPrefixPattern := ""
+	if isUUIDPrefix(ref) {
+		uuidPrefixPattern = ref + "%"
+	}
 	rows, err := s.db.Query(todoListSelectSQL()+`
-		WHERE deleted_at IS NULL AND (uuid = ? OR uuid LIKE ? OR name = ?)
+		WHERE deleted_at IS NULL AND (uuid = ? OR (? != '' AND uuid LIKE ?) OR name = ?)
 		ORDER BY CASE WHEN uuid = ? THEN 0 WHEN name = ? THEN 1 ELSE 2 END, client_updated_at DESC
 		LIMIT 2
-	`, ref, ref+"%", ref, ref, ref)
+	`, ref, uuidPrefixPattern, uuidPrefixPattern, ref, ref, ref)
 	if err != nil {
 		return TodoListRecord{}, fmt.Errorf("resolve todo list: %w", err)
 	}
@@ -1749,4 +1755,19 @@ func emptyJSON(value string) string {
 		return "{}"
 	}
 	return value
+}
+
+// isUUIDPrefix reports whether ref only has characters a UUID can contain.
+func isUUIDPrefix(ref string) bool {
+	for _, r := range ref {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F' || r == '-') {
+			return false
+		}
+	}
+	return ref != ""
+}
+
+// escapeLike makes user input match literally inside a LIKE ... ESCAPE '\' pattern.
+func escapeLike(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
 }

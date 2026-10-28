@@ -189,3 +189,32 @@ func TestApplySyncAckOverwritesCleanTodoAndList(t *testing.T) {
 		t.Fatalf("lists = %+v err=%v, want server list", lists, err)
 	}
 }
+
+func TestResolveRefsRejectLikeWildcards(t *testing.T) {
+	service, store, _ := newSyncAckTestService(t)
+	todo, err := service.AddTodo(testContext(), "only todo", "", "", 0)
+	if err != nil {
+		t.Fatalf("AddTodo() error = %v", err)
+	}
+	list, err := service.AddTodoList(testContext(), "100%", "blue", "briefcase", 1)
+	if err != nil {
+		t.Fatalf("AddTodoList() error = %v", err)
+	}
+	for _, ref := range []string{"%", "_", "zz"} {
+		if _, err := store.ResolveTodo(ref); err == nil {
+			t.Fatalf("ResolveTodo(%q) matched, want error", ref)
+		}
+	}
+	if got, err := store.ResolveTodo(todo.Todo.UUID[:8]); err != nil || got.UUID != todo.Todo.UUID {
+		t.Fatalf("ResolveTodo(prefix) = %v, %v; want the todo", got.UUID, err)
+	}
+	if _, err := store.ResolveTodoList("%"); err == nil {
+		t.Fatal("ResolveTodoList(%) matched, want error")
+	}
+	if got, err := store.ResolveTodoList("100%"); err != nil || got.UUID != list.List.UUID {
+		t.Fatalf("ResolveTodoList(name) = %v, %v; want the list", got.UUID, err)
+	}
+	if got, err := store.ResolveTodoList(list.List.UUID[:8]); err != nil || got.UUID != list.List.UUID {
+		t.Fatalf("ResolveTodoList(prefix) = %v, %v; want the list", got.UUID, err)
+	}
+}
