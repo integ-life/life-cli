@@ -401,7 +401,17 @@ func (s *Store) PendingSyncBatch() (SyncBatch, error) {
 }
 
 func (s *Store) SaveTodo(todo TodoRecord) error {
-	_, err := s.db.Exec(`
+	_, err := s.saveTodo(todo, "")
+	return err
+}
+
+// ApplyRemoteTodo stores a server row unless the local row has unsynced edits.
+func (s *Store) ApplyRemoteTodo(todo TodoRecord) (bool, error) {
+	return s.saveTodo(todo, ` WHERE todos.synced_at IS NOT NULL`)
+}
+
+func (s *Store) saveTodo(todo TodoRecord, conflictWhere string) (bool, error) {
+	result, err := s.db.Exec(`
 		INSERT INTO todos (
 			uuid, parent_uuid, content, notes, completed, sort_order, list_uuid,
 			completed_at, deleted_at, archived_at, deadline, goal_uuid, milestone_uuid,
@@ -433,7 +443,7 @@ func (s *Store) SaveTodo(todo TodoRecord) error {
 			updated_at = excluded.updated_at,
 			client_updated_at = excluded.client_updated_at,
 			synced_at = excluded.synced_at,
-			last_sync_error = excluded.last_sync_error
+			last_sync_error = excluded.last_sync_error`+conflictWhere+`
 	`, todo.UUID, todo.ParentUUID, todo.Content, todo.Notes, todo.Completed, todo.SortOrder, todo.ListUUID,
 		formatNullTime(todo.CompletedAt), formatNullTime(todo.DeletedAt), formatNullTime(todo.ArchivedAt), formatNullTime(todo.Deadline),
 		todo.GoalUUID, todo.MilestoneUUID, todo.CategoryUUID, todo.TaskRole, todo.TodoSource,
@@ -442,9 +452,13 @@ func (s *Store) SaveTodo(todo TodoRecord) error {
 		formatTime(todo.CreatedAt), formatTime(todo.UpdatedAt), formatTime(todo.ClientCreatedAt), formatTime(todo.ClientUpdatedAt),
 		formatNullTime(todo.SyncedAt), todo.LastSyncError)
 	if err != nil {
-		return fmt.Errorf("save todo: %w", err)
+		return false, fmt.Errorf("save todo: %w", err)
 	}
-	return nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("save todo: %w", err)
+	}
+	return affected > 0, nil
 }
 
 func (s *Store) Todo(uuid string) (TodoRecord, error) {
@@ -624,7 +638,17 @@ func (s *Store) MarkTodoSyncError(uuid, detail string) error {
 }
 
 func (s *Store) SaveTodoList(list TodoListRecord) error {
-	_, err := s.db.Exec(`
+	_, err := s.saveTodoList(list, "")
+	return err
+}
+
+// ApplyRemoteTodoList stores a server row unless the local row has unsynced edits.
+func (s *Store) ApplyRemoteTodoList(list TodoListRecord) (bool, error) {
+	return s.saveTodoList(list, ` WHERE todo_lists.synced_at IS NOT NULL`)
+}
+
+func (s *Store) saveTodoList(list TodoListRecord, conflictWhere string) (bool, error) {
+	result, err := s.db.Exec(`
 		INSERT INTO todo_lists (
 			uuid, name, color, icon, sort_order, deleted_at, created_at, updated_at,
 			client_created_at, client_updated_at, synced_at, last_sync_error
@@ -639,14 +663,18 @@ func (s *Store) SaveTodoList(list TodoListRecord) error {
 			updated_at = excluded.updated_at,
 			client_updated_at = excluded.client_updated_at,
 			synced_at = excluded.synced_at,
-			last_sync_error = excluded.last_sync_error
+			last_sync_error = excluded.last_sync_error`+conflictWhere+`
 	`, list.UUID, list.Name, list.Color, list.Icon, list.SortOrder, formatNullTime(list.DeletedAt),
 		formatTime(list.CreatedAt), formatTime(list.UpdatedAt), formatTime(list.ClientCreatedAt), formatTime(list.ClientUpdatedAt),
 		formatNullTime(list.SyncedAt), list.LastSyncError)
 	if err != nil {
-		return fmt.Errorf("save todo list: %w", err)
+		return false, fmt.Errorf("save todo list: %w", err)
 	}
-	return nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("save todo list: %w", err)
+	}
+	return affected > 0, nil
 }
 
 func (s *Store) ResolveTodoList(ref string) (TodoListRecord, error) {

@@ -953,7 +953,7 @@ func (s *Service) applySyncAck(ack SyncAck) error {
 		}
 	}
 	for _, list := range ack.TodoListServerRows {
-		if err := s.store.SaveTodoList(list); err != nil {
+		if _, err := s.store.ApplyRemoteTodoList(list); err != nil {
 			return err
 		}
 	}
@@ -972,7 +972,7 @@ func (s *Service) applySyncAck(ack SyncAck) error {
 		}
 	}
 	for _, todo := range ack.TodoServerRecords {
-		if err := s.store.SaveTodo(todo); err != nil {
+		if _, err := s.store.ApplyRemoteTodo(todo); err != nil {
 			return err
 		}
 	}

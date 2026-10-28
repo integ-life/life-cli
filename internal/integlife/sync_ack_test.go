@@ -127,3 +127,65 @@ func TestApplySyncAckKeepsAITaskRunEditedDuringRequest(t *testing.T) {
 		}
 	}
 }
+
+func TestApplySyncAckDoesNotOverwriteUnsyncedTodoOrList(t *testing.T) {
+	service, store, now := newSyncAckTestService(t)
+	todoResult, err := service.AddTodo(testContext(), "local edit", "", "", 0)
+	if err != nil {
+		t.Fatalf("AddTodo() error = %v", err)
+	}
+	listResult, err := service.AddTodoList(testContext(), "Local", "blue", "briefcase", 1)
+	if err != nil {
+		t.Fatalf("AddTodoList() error = %v", err)
+	}
+	serverTodo := todoResult.Todo
+	serverTodo.Content = "stale server copy"
+	serverList := listResult.List
+	serverList.Name = "Server"
+	ack := SyncAck{ServerTime: *now, TodoServerRecords: []TodoRecord{serverTodo}, TodoListServerRows: []TodoListRecord{serverList}}
+	if err := service.applySyncAck(ack); err != nil {
+		t.Fatalf("applySyncAck() error = %v", err)
+	}
+	todos, err := store.PendingTodos()
+	if err != nil || len(todos) != 1 || todos[0].Content != "local edit" {
+		t.Fatalf("pending todos = %+v err=%v, want untouched local edit", todos, err)
+	}
+	lists, err := store.PendingTodoLists()
+	if err != nil || len(lists) != 1 || lists[0].Name != "Local" {
+		t.Fatalf("pending lists = %+v err=%v, want untouched local list", lists, err)
+	}
+}
+
+func TestApplySyncAckOverwritesCleanTodoAndList(t *testing.T) {
+	service, store, now := newSyncAckTestService(t)
+	todoResult, err := service.AddTodo(testContext(), "old", "", "", 0)
+	if err != nil {
+		t.Fatalf("AddTodo() error = %v", err)
+	}
+	listResult, err := service.AddTodoList(testContext(), "Old", "blue", "briefcase", 1)
+	if err != nil {
+		t.Fatalf("AddTodoList() error = %v", err)
+	}
+	if err := service.applySyncAck(ackBatch(t, service, store)); err != nil {
+		t.Fatalf("applySyncAck() error = %v", err)
+	}
+	synced := *now
+	serverTodo := todoResult.Todo
+	serverTodo.Content = "server copy"
+	serverTodo.SyncedAt = &synced
+	serverList := listResult.List
+	serverList.Name = "Server"
+	serverList.SyncedAt = &synced
+	ack := SyncAck{ServerTime: synced, TodoServerRecords: []TodoRecord{serverTodo}, TodoListServerRows: []TodoListRecord{serverList}}
+	if err := service.applySyncAck(ack); err != nil {
+		t.Fatalf("applySyncAck() error = %v", err)
+	}
+	gotTodo, err := store.Todo(todoResult.Todo.UUID)
+	if err != nil || gotTodo.Content != "server copy" {
+		t.Fatalf("todo = %+v err=%v, want server copy", gotTodo, err)
+	}
+	lists, err := store.ListTodoLists(false)
+	if err != nil || len(lists) != 1 || lists[0].Name != "Server" {
+		t.Fatalf("lists = %+v err=%v, want server list", lists, err)
+	}
+}
