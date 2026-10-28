@@ -195,15 +195,18 @@ type SyncAck struct {
 	NoteErrors           map[string]string
 	StatusLogUUIDs       []string
 	TodoSynced           []string
+	TodoAttempts         map[string]time.Time
 	TodoConflicts        []string
 	TodoServerRecords    []TodoRecord
 	TodoReplySynced      []string
 	TodoReplyConflicts   []string
 	TodoReplyServerRows  []TodoReplyRecord
 	TodoListSynced       []string
+	TodoListAttempts     map[string]time.Time
 	TodoListConflicts    []string
 	TodoListServerRows   []TodoListRecord
 	AITaskRunSynced      []string
+	AITaskRunAttempts    map[string]time.Time
 	AITaskRunConflicts   []string
 	AITaskEventSynced    []string
 	AITaskEventErrors    map[string]string

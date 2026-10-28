@@ -491,12 +491,15 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 		NoteErrors:           map[string]string{},
 		StatusLogUUIDs:       make([]string, 0, len(batch.StatusLogs)),
 		TodoSynced:           []string{},
+		TodoAttempts:         map[string]time.Time{},
 		TodoServerRecords:    []TodoRecord{},
 		TodoReplySynced:      []string{},
 		TodoReplyServerRows:  []TodoReplyRecord{},
 		TodoListSynced:       []string{},
+		TodoListAttempts:     map[string]time.Time{},
 		TodoListServerRows:   []TodoListRecord{},
 		AITaskRunSynced:      []string{},
+		AITaskRunAttempts:    map[string]time.Time{},
 		AITaskEventSynced:    []string{},
 		AITaskEventErrors:    map[string]string{},
 		ServerTime:           serverTime,
@@ -568,6 +571,7 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 	pendingLists := map[string]bool{}
 	for _, list := range batch.TodoLists {
 		pendingLists[list.UUID] = true
+		ack.TodoListAttempts[list.UUID] = list.ClientUpdatedAt
 	}
 	listConflicts := map[string]bool{}
 	for _, list := range resp.TodoListsServerNewer {
@@ -592,6 +596,7 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 	pendingTodos := map[string]bool{}
 	for _, todo := range batch.Todos {
 		pendingTodos[todo.UUID] = true
+		ack.TodoAttempts[todo.UUID] = todo.ClientUpdatedAt
 	}
 	todoConflicts := map[string]bool{}
 	for _, todo := range resp.TodosServerNewer {
@@ -638,6 +643,7 @@ func buildSyncAck(batch SyncBatch, resp syncResponse, detail string) SyncAck {
 	}
 
 	for _, run := range batch.AITaskRuns {
+		ack.AITaskRunAttempts[run.UUID] = run.ClientUpdatedAt
 		if runConflicts[run.UUID] {
 			ack.AITaskRunConflicts = append(ack.AITaskRunConflicts, run.UUID)
 			continue

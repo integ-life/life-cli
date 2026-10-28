@@ -605,8 +605,10 @@ func (s *Store) PendingTodos() ([]TodoRecord, error) {
 	return todos, nil
 }
 
-func (s *Store) MarkTodoSynced(uuid string, syncedAt time.Time) error {
-	_, err := s.db.Exec(`UPDATE todos SET synced_at = ?, last_sync_error = '' WHERE uuid = ?`, formatTime(syncedAt), uuid)
+// MarkTodoSynced only acknowledges the exact snapshot that was sent; a row
+// saved again since then keeps synced_at NULL and is uploaded next time.
+func (s *Store) MarkTodoSynced(uuid string, attemptedClientUpdatedAt, syncedAt time.Time) error {
+	_, err := s.db.Exec(`UPDATE todos SET synced_at = ?, last_sync_error = '' WHERE uuid = ? AND client_updated_at = ?`, formatTime(syncedAt), uuid, formatTime(attemptedClientUpdatedAt))
 	if err != nil {
 		return fmt.Errorf("mark todo synced: %w", err)
 	}
@@ -734,8 +736,9 @@ func (s *Store) PendingTodoLists() ([]TodoListRecord, error) {
 	return lists, nil
 }
 
-func (s *Store) MarkTodoListSynced(uuid string, syncedAt time.Time) error {
-	_, err := s.db.Exec(`UPDATE todo_lists SET synced_at = ?, last_sync_error = '' WHERE uuid = ?`, formatTime(syncedAt), uuid)
+// MarkTodoListSynced only acknowledges the exact snapshot that was sent.
+func (s *Store) MarkTodoListSynced(uuid string, attemptedClientUpdatedAt, syncedAt time.Time) error {
+	_, err := s.db.Exec(`UPDATE todo_lists SET synced_at = ?, last_sync_error = '' WHERE uuid = ? AND client_updated_at = ?`, formatTime(syncedAt), uuid, formatTime(attemptedClientUpdatedAt))
 	if err != nil {
 		return fmt.Errorf("mark todo list synced: %w", err)
 	}
@@ -928,10 +931,11 @@ func (s *Store) PendingAITaskRuns() ([]AITaskRunRecord, error) {
 	return runs, nil
 }
 
-func (s *Store) MarkAITaskRunSynced(uuid string, syncedAt time.Time) error {
+// MarkAITaskRunSynced only acknowledges the exact snapshot that was sent.
+func (s *Store) MarkAITaskRunSynced(uuid string, attemptedClientUpdatedAt, syncedAt time.Time) error {
 	_, err := s.db.Exec(
-		`UPDATE ai_task_runs SET synced_at = ?, last_sync_error = '' WHERE uuid = ?`,
-		formatTime(syncedAt), uuid,
+		`UPDATE ai_task_runs SET synced_at = ?, last_sync_error = '' WHERE uuid = ? AND client_updated_at = ?`,
+		formatTime(syncedAt), uuid, formatTime(attemptedClientUpdatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("mark ai task run synced: %w", err)

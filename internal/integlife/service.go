@@ -939,7 +939,11 @@ func (s *Service) applySyncAck(ack SyncAck) error {
 		}
 	}
 	for _, uuid := range ack.TodoListSynced {
-		if err := s.store.MarkTodoListSynced(uuid, ack.ServerTime); err != nil {
+		attempted, ok := ack.TodoListAttempts[uuid]
+		if !ok {
+			return fmt.Errorf("todo list acknowledgement is missing the sent snapshot: %s", uuid)
+		}
+		if err := s.store.MarkTodoListSynced(uuid, attempted, ack.ServerTime); err != nil {
 			return err
 		}
 	}
@@ -954,7 +958,11 @@ func (s *Service) applySyncAck(ack SyncAck) error {
 		}
 	}
 	for _, uuid := range ack.TodoSynced {
-		if err := s.store.MarkTodoSynced(uuid, ack.ServerTime); err != nil {
+		attempted, ok := ack.TodoAttempts[uuid]
+		if !ok {
+			return fmt.Errorf("todo acknowledgement is missing the sent snapshot: %s", uuid)
+		}
+		if err := s.store.MarkTodoSynced(uuid, attempted, ack.ServerTime); err != nil {
 			return err
 		}
 	}
@@ -984,7 +992,11 @@ func (s *Service) applySyncAck(ack SyncAck) error {
 		}
 	}
 	for _, uuid := range ack.AITaskRunSynced {
-		if err := s.store.MarkAITaskRunSynced(uuid, ack.ServerTime); err != nil {
+		attempted, ok := ack.AITaskRunAttempts[uuid]
+		if !ok {
+			return fmt.Errorf("ai task run acknowledgement is missing the sent snapshot: %s", uuid)
+		}
+		if err := s.store.MarkAITaskRunSynced(uuid, attempted, ack.ServerTime); err != nil {
 			return err
 		}
 	}
